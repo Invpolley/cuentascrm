@@ -171,7 +171,7 @@ input,select{font-family:inherit}
 <script>
 /* ============ MODELO DE DATOS ============ */
 const KEY='cuentascrm_v1';
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.2.2';
 const PAISES={BR:{f:'🇧🇷',n:'Brasil',cur:'BRL'},VE:{f:'🇻🇪',n:'Venezuela',cur:'VES'},US:{f:'🇺🇸',n:'USA',cur:'USD'}};
 const CATCOLOR={'Alimentación':'#3D7BFF','Tecnología':'#2ECC71','Viajes':'#F4C145','Servicios':'#A66BFF',
   'Salud':'#FF5C6C','Transporte':'#19C3D6','Entretenimiento':'#FF8A3D','Compras':'#E85FB0','Otros':'#8FA3C4'};
@@ -253,7 +253,7 @@ function registrarPago(id,monto,tipo){
   DB.pagos.push({id:Date.now(),cuenta_id:id,mes:ym,monto,moneda:c.moneda,fecha:isoToday(),tipo,facturaTotal:snapT,facturaMin:snapM});
   c.saldo=Math.max(0,(c.saldo||0)-monto);
   c.total=Math.max(0,(c.total||0)-monto);
-  if(c.total<=0&&c.venc&&!DB.pagados.includes(c.id+'|'+c.venc))DB.pagados.push(c.id+'|'+c.venc);
+  if(c.total<=0){c.min=0;if(c.venc&&!DB.pagados.includes(c.id+'|'+c.venc))DB.pagados.push(c.id+'|'+c.venc);}
   save();
 }
 function openPago(id){
@@ -322,9 +322,14 @@ function renderDash(){
       </div><div class="rows">`;
     arr.forEach(c=>{
       const s=sem(c.venc);
-      const dotc=s==='red'?'var(--red)':s==='yellow'?'var(--yellow)':s==='green'?'var(--green)':'var(--line)';
+      let dotc=s==='red'?'var(--red)':s==='yellow'?'var(--yellow)':s==='green'?'var(--green)':'var(--line)';
+      if(c.tipo==='tarjeta'&&(c.total||0)<=0)dotc='var(--green)';
       const ic=c.tipo==='tarjeta'?'💳':'🏦';
-      let sub2=c.tipo==='tarjeta'&&c.venc?`Vence ${fmtDate(c.venc)} · Mín ${fmt(c.min,c.moneda)}`:(c.tipo==='banco'?'Disponible':'');
+      let sub2='';
+      if(c.tipo==='tarjeta'){
+        if((c.total||0)<=0)sub2='Factura pagada ✓';
+        else if(c.venc)sub2=`Vence ${fmtDate(c.venc)} · Mín ${fmt(c.min,c.moneda)}`;
+      }else if(c.tipo==='banco'){sub2='Disponible';}
       const label=c.tipo==='tarjeta'?'Debes ':'';
       const amtV=inView(c.saldo,c.moneda);
       html+=`<div class="row">
@@ -503,6 +508,7 @@ function delPago(pid){
   if(!confirm('¿Eliminar este pago? El saldo de la tarjeta volverá a subir.'))return;
   const c=DB.cuentas.find(x=>x.id===p.cuenta_id);
   if(c){c.saldo=(c.saldo||0)+p.monto;c.total=(c.total||0)+p.monto;
+    if((c.total||0)>0&&p.facturaMin)c.min=p.facturaMin;
     if(c.venc){const k=c.id+'|'+c.venc;DB.pagados=DB.pagados.filter(x=>x!==k);}}
   DB.pagos=DB.pagos.filter(x=>x.id!==pid);save();renderAll();toast('Pago eliminado');
 }
@@ -559,8 +565,8 @@ function openCuenta(id){
     <div class="two">
       <div class="fld"><label>País</label><select id="fPais" onchange="autoMoneda()">
         ${Object.keys(PAISES).map(p=>`<option value="${p}" ${c.pais===p?'selected':''}>${PAISES[p].f} ${PAISES[p].n}</option>`).join('')}</select></div>
-      <div class="fld"><label>Moneda</label><select id="fMoneda">
-        ${['BRL','VES','USD'].map(mm=>`<option value="${mm}" ${c.moneda===mm?'selected':''}>${mm}</option>`).join('')}</select></div>
+      <div class="fld"><label>Moneda (anclada al país)</label>
+        <input id="fMoneda" value="${PAISES[c.pais||'BR'].cur}" readonly style="opacity:.65;cursor:not-allowed"></div>
     </div>
     <div class="fld"><label id="lblSaldo">${c.tipo==='tarjeta'?'Saldo que debes':'Saldo disponible'}</label>
       <input id="fSaldo" type="number" inputmode="decimal" value="${c.saldo??''}"></div>
@@ -587,7 +593,7 @@ function saveCuenta(id){
   const tipo=_tipo||'tarjeta';
   const o={
     nombre:document.getElementById('fNombre').value||'Sin nombre',
-    tipo, pais:document.getElementById('fPais').value, moneda:document.getElementById('fMoneda').value,
+    tipo, pais:document.getElementById('fPais').value, moneda:PAISES[document.getElementById('fPais').value].cur,
     saldo:parseFloat(document.getElementById('fSaldo').value)||0,
     cupo:tipo==='tarjeta'?(parseFloat(document.getElementById('fCupo').value)||0):0,
     min:tipo==='tarjeta'?(parseFloat(document.getElementById('fMin').value)||0):0,
