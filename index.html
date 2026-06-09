@@ -154,6 +154,7 @@ input,select{font-family:inherit}
   <section id="view-dash" class="wrap"></section>
   <section id="view-global" class="wrap" style="display:none"></section>
   <section id="view-resumen" class="wrap" style="display:none"></section>
+  <section id="view-pagos" class="wrap" style="display:none"></section>
   <section id="view-ajustes" class="wrap" style="display:none"></section>
 </main>
 
@@ -161,6 +162,7 @@ input,select{font-family:inherit}
   <button data-v="dash" class="active"><span class="ni">🏠</span>Cuentas</button>
   <button data-v="global"><span class="ni">🌎</span>Global</button>
   <button data-v="resumen"><span class="ni">📊</span>Resumen</button>
+  <button data-v="pagos"><span class="ni">🧾</span>Pagos</button>
   <button data-v="ajustes"><span class="ni">⚙️</span>Ajustes</button>
 </nav>
 
@@ -169,7 +171,7 @@ input,select{font-family:inherit}
 <script>
 /* ============ MODELO DE DATOS ============ */
 const KEY='cuentascrm_v1';
-const APP_VERSION='1.1.0';
+const APP_VERSION='1.2.0';
 const PAISES={BR:{f:'🇧🇷',n:'Brasil',cur:'BRL'},VE:{f:'🇻🇪',n:'Venezuela',cur:'VES'},US:{f:'🇺🇸',n:'USA',cur:'USD'}};
 const CATCOLOR={'Alimentación':'#3D7BFF','Tecnología':'#2ECC71','Viajes':'#F4C145','Servicios':'#A66BFF',
   'Salud':'#FF5C6C','Transporte':'#19C3D6','Entretenimiento':'#FF8A3D','Compras':'#E85FB0','Otros':'#8FA3C4'};
@@ -196,11 +198,13 @@ const seed={
     mv('BR','BRL',-90,'Uber','Transporte',4), mv('US','USD',-40,'Netflix','Entretenimiento',6),
     mv('US','USD',-80,'Costco','Compras',35), mv('BR','BRL',-150,'Shell','Transporte',34)
   ],
-  pagados:[]
+  pagados:[],
+  pagos:[],
+  workMonth:null
 };
 
 let DB=load();
-function load(){try{const s=JSON.parse(localStorage.getItem(KEY));return s?s:structuredClone(seed);}catch(e){return structuredClone(seed);}}
+function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s){s.pagos=s.pagos||[];if(!('workMonth'in s))s.workMonth=null;return s;}return structuredClone(seed);}catch(e){return structuredClone(seed);}}
 function save(){localStorage.setItem(KEY,JSON.stringify(DB));}
 
 /* ============ CONVERSIÓN DE DIVISA ============ */
@@ -224,6 +228,60 @@ function activeAlerts(){
     .sort((a,b)=>a.d-b.d);
 }
 
+/* ============ PAGOS / MES DE TRABAJO ============ */
+function ymNow(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+function mesTrabajo(){return DB.workMonth||ymNow();}
+function mesLabel(ym){const a=ym.split('-');return new Date(a[0],a[1]-1,1).toLocaleDateString('es',{month:'long',year:'numeric'});}
+function isoToday(){return new Date().toISOString().slice(0,10);}
+function changeMonth(delta){let a=mesTrabajo().split('-').map(Number);let y=a[0],m=a[1]+delta;if(m<1){m=12;y--;}if(m>12){m=1;y++;}DB.workMonth=y+'-'+String(m).padStart(2,'0');save();renderAll();}
+function facturaDeMes(card,ym){
+  const ps=DB.pagos.filter(p=>p.cuenta_id===card.id&&p.mes===ym);
+  if(ps.length)return {total:ps[0].facturaTotal,min:ps[0].facturaMin};
+  if(card.tipo==='tarjeta'&&card.venc&&card.venc.slice(0,7)===ym)return {total:card.total,min:card.min};
+  return null;
+}
+function pagadoDeMes(card,ym){return DB.pagos.filter(p=>p.cuenta_id===card.id&&p.mes===ym).reduce((s,p)=>s+p.monto,0);}
+function mesResumen(ym){ym=ym||mesTrabajo();let facturado=0,pagado=0;
+  DB.cuentas.forEach(c=>{const fac=facturaDeMes(c,ym);if(fac)facturado+=inView(fac.total,c.moneda);pagado+=inView(pagadoDeMes(c,ym),c.moneda);});
+  return {facturado,pagado,pend:Math.max(0,facturado-pagado)};}
+function registrarPago(id,monto,tipo){
+  const c=DB.cuentas.find(x=>x.id===id);if(!c||monto<=0)return;
+  const ym=mesTrabajo();
+  const prev=DB.pagos.filter(p=>p.cuenta_id===id&&p.mes===ym);
+  const snapT=prev.length?prev[0].facturaTotal:c.total;
+  const snapM=prev.length?prev[0].facturaMin:c.min;
+  DB.pagos.push({id:Date.now(),cuenta_id:id,mes:ym,monto,moneda:c.moneda,fecha:isoToday(),tipo,facturaTotal:snapT,facturaMin:snapM});
+  c.saldo=Math.max(0,(c.saldo||0)-monto);
+  c.total=Math.max(0,(c.total||0)-monto);
+  if(c.total<=0&&c.venc&&!DB.pagados.includes(c.id+'|'+c.venc))DB.pagados.push(c.id+'|'+c.venc);
+  save();
+}
+function openPago(id){
+  const c=DB.cuentas.find(x=>x.id===id);if(!c)return;
+  const ym=mesTrabajo();const fac=facturaDeMes(c,ym);
+  const total=fac?fac.total:(c.total||0);const min=fac?fac.min:(c.min||0);
+  const pagado=pagadoDeMes(c,ym);const pend=Math.max(0,total-pagado);
+  document.getElementById('sheet').innerHTML=`
+    <h2>💳 Pagar · ${c.nombre}</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 12px">Mes de trabajo: <b style="text-transform:capitalize">${mesLabel(ym)}</b></p>
+    <div class="card" style="padding:10px 12px;margin-bottom:12px">
+      <div class="ocrline">Factura del mes<span style="margin-left:auto;font-weight:700">${fmt(total,c.moneda)}</span></div>
+      <div class="ocrline">Pago mínimo<span style="margin-left:auto;font-weight:700">${fmt(min,c.moneda)}</span></div>
+      <div class="ocrline">Ya pagado<span style="margin-left:auto;font-weight:700">${fmt(pagado,c.moneda)}</span></div>
+      <div class="ocrline">Pendiente<span style="margin-left:auto;font-weight:800;color:var(--accent)">${fmt(pend,c.moneda)}</span></div>
+    </div>
+    <div class="two">
+      <button class="btn" onclick="doPago(${id},${pend},'total')">Pagar total</button>
+      <button class="btn ghost" onclick="doPago(${id},${Math.min(min,pend)},'minimo')">Pagar mínimo</button>
+    </div>
+    <div class="fld" style="margin-top:12px"><label>Otro monto (${c.moneda})</label><input id="pagoMonto" type="number" inputmode="decimal" placeholder="0"></div>
+    <button class="btn" onclick="doPagoLibre(${id})">✓ Registrar pago</button>
+    <button class="btn ghost" onclick="closeSheet()">Cancelar</button>`;
+  openSheet();
+}
+function doPago(id,monto,tipo){if(monto<=0){toast('Nada pendiente por pagar');return;}registrarPago(id,monto,tipo);closeSheet();renderAll();toast('Pago registrado ✓');}
+function doPagoLibre(id){const v=parseFloat(document.getElementById('pagoMonto').value)||0;if(v<=0){toast('Escribe un monto');return;}registrarPago(id,v,'parcial');closeSheet();renderAll();toast('Pago registrado ✓');}
+
 /* ============ HEADER ============ */
 function totalLiquidez(){return DB.cuentas.filter(c=>c.tipo==='banco').reduce((s,c)=>s+inView(c.saldo,c.moneda),0);}
 function totalDeuda(){return DB.cuentas.filter(c=>c.tipo==='tarjeta').reduce((s,c)=>s+inView(c.saldo,c.moneda),0);}
@@ -245,7 +303,7 @@ function renderDash(){
     al.forEach(a=>{
       const txt=a.d<=0?'vence hoy':('vence en '+a.d+(a.d===1?' día':' días'));
       html+=`<div class="alert ${a.sem==='red'?'red':''}">⏰ <b>${a.c.nombre}</b> ${txt} · Mín ${fmt(inView(a.c.min,a.c.moneda),DB.divisa)} · Total ${fmt(inView(a.c.total,a.c.moneda),DB.divisa)}
-        <button class="x" onclick="marcarPagado(${a.c.id},'${a.c.venc}')">✓</button></div>`;
+        <button class="x" onclick="openPago(${a.c.id})">💳</button></div>`;
     });
     html+='</div>';
   }
@@ -274,6 +332,7 @@ function renderDash(){
         <span class="ic">${ic}</span>
         <span class="info"><div class="t1">${c.nombre}</div><div class="t2">${sub2}</div></span>
         <span class="amt">${label}${fmt(c.saldo,c.moneda)}<small>${DB.divisa!==c.moneda?'≈ '+fmt(amtV,DB.divisa):' '}</small></span>
+        ${c.tipo==='tarjeta'?`<button class="edit" onclick="openPago(${c.id})" style="margin-right:6px">💳</button>`:''}
         <button class="edit" onclick="editSaldo(${c.id})">✏️</button>
       </div>`;
     });
@@ -320,28 +379,27 @@ function paisColor(p){return p==='BR'?'var(--br)':p==='VE'?'var(--ve)':'var(--us
 function distRow(label,val,tot,color){const pct=Math.round(val/tot*100);
   return `<div class="distrow"><div class="lbl"><span>${label}</span><span class="muted">${pct}%</span></div>
     <div class="bar"><i style="width:${pct}%;background:${color}"></i></div></div>`;}
-function deudaDelMes(){
-  const now=new Date();const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  return DB.cuentas.filter(c=>c.tipo==='tarjeta'&&c.venc&&c.venc.slice(0,7)===ym&&!DB.pagados.includes(c.id+'|'+c.venc))
-    .reduce((s,c)=>s+inView(c.total,c.moneda),0);
-}
+function deudaDelMes(){return mesResumen().pend;}
 
 /* ============ RESUMEN ============ */
 let resumenTab='cat';
 function renderResumen(){
   const v=document.getElementById('view-resumen');
-  const debeMes=deudaDelMes();
-  const pagadoMes=DB.cuentas.filter(c=>c.tipo==='tarjeta'&&c.venc&&DB.pagados.includes(c.id+'|'+c.venc))
-    .reduce((s,c)=>s+inView(c.total,c.moneda),0);
-  const totalMes=debeMes+pagadoMes;
+  const ym=mesTrabajo();
+  const mr=mesResumen(ym);
+  const debeMes=mr.pend, totalMes=mr.facturado, pagadoMes=mr.pagado;
   const pct=totalMes>0?Math.round(pagadoMes/totalMes*100):0;
   const next=activeAlerts()[0];
-  const now=new Date();const ym=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const byCat={};let totGasto=0;
   DB.movs.filter(x=>x.monto<0&&x.date.slice(0,7)===ym).forEach(x=>{
     const val=Math.abs(inView(x.monto,x.moneda));byCat[x.categoria]=(byCat[x.categoria]||0)+val;totGasto+=val;});
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   v.innerHTML=`
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px">
+      <button class="edit" onclick="changeMonth(-1)">‹</button>
+      <b style="text-transform:capitalize">${mesLabel(ym)}</b>
+      <button class="edit" onclick="changeMonth(1)">›</button>
+    </div>
     <div class="card">
       <h3>Lo que debes este mes</h3>
       <div class="ringwrap">
@@ -399,6 +457,54 @@ function tendView(){
       <div style="font-size:11px;color:var(--muted)">${mn}</div></div>`;});
   bars+='</div>';
   return bars;
+}
+
+/* ============ PAGOS (historial) ============ */
+function renderPagos(){
+  const v=document.getElementById('view-pagos');
+  const ym=mesTrabajo();
+  const tarjetas=DB.cuentas.filter(c=>c.tipo==='tarjeta');
+  let facTot=0,pagTot=0,rows='';
+  tarjetas.forEach(c=>{
+    const fac=facturaDeMes(c,ym);const pagado=pagadoDeMes(c,ym);
+    if(!fac&&pagado===0)return;
+    const total=fac?fac.total:0;
+    facTot+=inView(total,c.moneda);pagTot+=inView(pagado,c.moneda);
+    const estado=pagado<=0?'⚪':(total>0&&pagado>=total?'✅':'🟡');
+    const falta=Math.max(0,total-pagado);
+    rows+=`<div class="row">
+      <span class="ic">💳</span>
+      <span class="info"><div class="t1">${c.nombre} ${estado}</div>
+        <div class="t2">Factura ${fmt(total,c.moneda)} · Pagado ${fmt(pagado,c.moneda)}${falta>0?' · falta '+fmt(falta,c.moneda):''}</div></span>
+      <button class="edit" onclick="openPago(${c.id})">💳</button></div>`;
+  });
+  if(!rows)rows='<div class="empty">Sin facturas ni pagos en este mes.</div>';
+  const pm=DB.pagos.filter(p=>p.mes===ym).sort((a,b)=>b.id-a.id);
+  let hist='';
+  pm.forEach(p=>{const c=DB.cuentas.find(x=>x.id===p.cuenta_id);
+    hist+=`<div class="ocrline"><span>${fmtDate(p.fecha)} · ${c?c.nombre:'—'} · ${p.tipo}</span><span style="margin-left:auto;font-weight:700">${fmt(p.monto,p.moneda)}<button class="x" style="margin-left:8px" onclick="delPago(${p.id})">🗑</button></span></div>`;});
+  const ppct=facTot>0?Math.min(100,Math.round(pagTot/facTot*100)):0;
+  v.innerHTML=`
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px">
+      <button class="edit" onclick="changeMonth(-1)">‹</button>
+      <b style="text-transform:capitalize">${mesLabel(ym)}</b>
+      <button class="edit" onclick="changeMonth(1)">›</button>
+    </div>
+    <div class="card"><h3>Facturas y pagos del mes</h3>${rows}</div>
+    <div class="card"><h3>Total del mes</h3>
+      <div class="distrow"><div class="lbl"><span>Facturado</span><b>${fmt(facTot,DB.divisa)}</b></div></div>
+      <div class="distrow"><div class="lbl"><span>Pagado (${ppct}%)</span><b>${fmt(pagTot,DB.divisa)}</b></div>
+        <div class="bar"><i style="width:${ppct}%;background:var(--green)"></i></div></div>
+    </div>
+    ${pm.length?`<div class="card"><h3>Movimientos de pago</h3>${hist}</div>`:''}`;
+}
+function delPago(pid){
+  const p=DB.pagos.find(x=>x.id===pid);if(!p)return;
+  if(!confirm('¿Eliminar este pago? El saldo de la tarjeta volverá a subir.'))return;
+  const c=DB.cuentas.find(x=>x.id===p.cuenta_id);
+  if(c){c.saldo=(c.saldo||0)+p.monto;c.total=(c.total||0)+p.monto;
+    if(c.venc){const k=c.id+'|'+c.venc;DB.pagados=DB.pagados.filter(x=>x!==k);}}
+  DB.pagos=DB.pagos.filter(x=>x.id!==pid);save();renderAll();toast('Pago eliminado');
 }
 
 /* ============ AJUSTES ============ */
@@ -555,11 +661,11 @@ function showLock(){
 
 /* ============ NAV / TOAST ============ */
 function go(view){
-  ['dash','global','resumen','ajustes'].forEach(v=>{document.getElementById('view-'+v).style.display=v===view?'':'none';});
+  ['dash','global','resumen','pagos','ajustes'].forEach(v=>{document.getElementById('view-'+v).style.display=v===view?'':'none';});
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===view));
-  const titles={dash:'Balance General',global:'Globalización',resumen:'Resumen · '+new Date().toLocaleDateString('es',{month:'long',year:'numeric'}),ajustes:'Ajustes'};
+  const titles={dash:'Balance General',global:'Globalización',resumen:'Resumen',pagos:'Pagos e historial',ajustes:'Ajustes'};
   document.getElementById('abTitle').textContent=titles[view];
-  if(view==='global')renderGlobal();if(view==='resumen')renderResumen();if(view==='ajustes')renderAjustes();
+  if(view==='global')renderGlobal();if(view==='resumen')renderResumen();if(view==='pagos')renderPagos();if(view==='ajustes')renderAjustes();
 }
 document.getElementById('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(b)go(b.dataset.v);});
 document.getElementById('pills').addEventListener('click',e=>{const b=e.target.closest('.pill');if(b){DB.divisa=b.dataset.c;save();renderAll();}});
@@ -760,7 +866,7 @@ function applyOcr(){
 /* ============ INIT ============ */
 function renderAll(){renderHeader();renderDash();
   const cur=document.querySelector('#nav button.active').dataset.v;
-  if(cur==='global')renderGlobal();if(cur==='resumen')renderResumen();if(cur==='ajustes')renderAjustes();}
+  if(cur==='global')renderGlobal();if(cur==='resumen')renderResumen();if(cur==='pagos')renderPagos();if(cur==='ajustes')renderAjustes();}
 document.getElementById('lockSub').textContent='CuentasCRM · v'+APP_VERSION;
 showLock();renderAll();
 
