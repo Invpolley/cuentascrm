@@ -171,7 +171,7 @@ input,select{font-family:inherit}
 <script>
 /* ============ MODELO DE DATOS ============ */
 const KEY='cuentascrm_v1';
-const APP_VERSION='1.2.2';
+const APP_VERSION='1.2.3';
 const PAISES={BR:{f:'🇧🇷',n:'Brasil',cur:'BRL'},VE:{f:'🇻🇪',n:'Venezuela',cur:'VES'},US:{f:'🇺🇸',n:'USA',cur:'USD'}};
 const CATCOLOR={'Alimentación':'#3D7BFF','Tecnología':'#2ECC71','Viajes':'#F4C145','Servicios':'#A66BFF',
   'Salud':'#FF5C6C','Transporte':'#19C3D6','Entretenimiento':'#FF8A3D','Compras':'#E85FB0','Otros':'#8FA3C4'};
@@ -311,13 +311,14 @@ function renderDash(){
   ['BR','VE','US'].forEach(p=>{
     const arr=DB.cuentas.filter(c=>c.pais===p);
     if(!arr.length)return;
-    const subt=arr.reduce((s,c)=>s+(c.tipo==='banco'?inView(c.saldo,c.moneda):-inView(c.saldo,c.moneda)),0);
+    const curPais=PAISES[p].cur;
+    const subt=arr.reduce((s,c)=>{const v=conv(c.saldo,c.moneda,curPais);return s+(c.tipo==='banco'?v:-v);},0);
     const collapsed=DB.collapsed&&DB.collapsed[p]?'collapsed':'';
     html+=`<div class="country ${collapsed}" data-p="${p}">
       <div class="country-head" onclick="toggleCountry('${p}')">
         <span class="flag">${PAISES[p].f}</span>
         <span class="name">${PAISES[p].n.toUpperCase()}</span>
-        <span class="sub">${fmt(subt,DB.divisa)}</span>
+        <span class="sub">${fmt(subt,curPais)}</span>
         <span class="chev">▼</span>
       </div><div class="rows">`;
     arr.forEach(c=>{
