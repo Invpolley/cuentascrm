@@ -169,6 +169,7 @@ input,select{font-family:inherit}
 <script>
 /* ============ MODELO DE DATOS ============ */
 const KEY='cuentascrm_v1';
+const APP_VERSION='1.1.0';
 const PAISES={BR:{f:'🇧🇷',n:'Brasil',cur:'BRL'},VE:{f:'🇻🇪',n:'Venezuela',cur:'VES'},US:{f:'🇺🇸',n:'USA',cur:'USD'}};
 const CATCOLOR={'Alimentación':'#3D7BFF','Tecnología':'#2ECC71','Viajes':'#F4C145','Servicios':'#A66BFF',
   'Salud':'#FF5C6C','Transporte':'#19C3D6','Entretenimiento':'#FF8A3D','Compras':'#E85FB0','Otros':'#8FA3C4'};
@@ -231,7 +232,7 @@ function renderHeader(){
   document.getElementById('abBalance').textContent=fmt(patrimonio(),DB.divisa);
   document.querySelectorAll('#pills .pill').forEach(p=>p.classList.toggle('active',p.dataset.c===DB.divisa));
   const dl=document.getElementById('abDelta');
-  dl.textContent='Patrimonio neto • '+DB.cuentas.length+' cuentas';dl.className='delta';
+  dl.textContent='Patrimonio neto • '+DB.cuentas.length+' cuentas • v'+APP_VERSION;dl.className='delta';
 }
 
 /* ============ DASHBOARD ============ */
@@ -428,7 +429,7 @@ function renderAjustes(){
       <button class="btn ghost" onclick="exportData()">Exportar respaldo (.json para Google Drive)</button>
       <button class="btn danger" onclick="resetData()">Borrar todo y reiniciar</button>
     </div>
-    <div class="hint" style="margin:0 0 10px">CuentasCRM · MVP v1 · datos guardados localmente en este dispositivo</div>`;
+    <div class="hint" style="margin:0 0 10px">CuentasCRM · versión ${APP_VERSION} · datos guardados localmente en este dispositivo</div>`;
 }
 function saveTasas(){DB.tasas.BRL=parseFloat(document.getElementById('tBRL').value)||DB.tasas.BRL;
   DB.tasas.VES=parseFloat(document.getElementById('tVES').value)||DB.tasas.VES;save();renderAll();toast('Tasas actualizadas');}
@@ -760,6 +761,7 @@ function applyOcr(){
 function renderAll(){renderHeader();renderDash();
   const cur=document.querySelector('#nav button.active').dataset.v;
   if(cur==='global')renderGlobal();if(cur==='resumen')renderResumen();if(cur==='ajustes')renderAjustes();}
+document.getElementById('lockSub').textContent='CuentasCRM · v'+APP_VERSION;
 showLock();renderAll();
 
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}

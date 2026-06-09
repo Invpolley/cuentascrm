@@ -1,5 +1,5 @@
 /* CuentasCRM Service Worker — offline cache */
-const CACHE = 'cuentascrm-v2';
+const CACHE = 'cuentascrm-v3';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
