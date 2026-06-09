@@ -590,48 +590,63 @@ function openOcr(){
   openSheet();
   document.getElementById('ocrFile').onchange=handleOcrFile;
 }
+function ocrStatus(m){const el=document.getElementById('ocrStatus');if(el)el.innerHTML=`<div class="spin"></div><div class="hint">${m}</div>`;}
+function ocrStatusSheet(){document.getElementById('sheet').innerHTML='<h2>📄 Leer estado de cuenta</h2><div id="ocrStatus"></div>';}
+let _pwResolve=null;
+async function loadPdfDoc(buf,password){
+  try{ return await pdfjsLib.getDocument({data:buf.slice(0),password:password||undefined}).promise; }
+  catch(e){ if(e&&e.name==='PasswordException'){const er=new Error('PWD');er.needPwd=true;throw er;} throw e; }
+}
+function askPdfPassword(){
+  return new Promise((resolve)=>{
+    _pwResolve=resolve;
+    document.getElementById('sheet').innerHTML=`
+      <h2>🔒 PDF protegido</h2>
+      <p class="muted" style="font-size:13px;margin:0 0 12px">Esta factura tiene contraseña. En Santander suele ser tu <b>CPF</b> (a veces solo los primeros dígitos) o tu fecha de nacimiento. Se usa solo para abrir el archivo aquí; no se guarda.</p>
+      <div class="fld"><label>Contraseña del PDF</label><input id="pdfPw" type="password" inputmode="numeric"></div>
+      <button class="btn" onclick="submitPdfPw()">Abrir</button>
+      <button class="btn ghost" onclick="cancelPdfPw()">Cancelar</button>`;
+    openSheet();
+    setTimeout(()=>{const i=document.getElementById('pdfPw');if(i)i.focus();},120);
+  });
+}
+function submitPdfPw(){const v=document.getElementById('pdfPw').value;if(_pwResolve){const r=_pwResolve;_pwResolve=null;r(v);}}
+function cancelPdfPw(){if(_pwResolve){const r=_pwResolve;_pwResolve=null;r(null);}closeSheet();}
+async function pdfTextDoc(pdf){let out='';for(let i=1;i<=Math.min(pdf.numPages,6);i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();out+=tc.items.map(t=>t.str).join(' ')+'\n';}return out;}
+async function pdfOcrDoc(pdf){let text='';for(let i=1;i<=Math.min(pdf.numPages,2);i++){ocrStatus('OCR página '+i+'…');const pg=await pdf.getPage(i);const vp=pg.getViewport({scale:2});const cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;const r=await Tesseract.recognize(cv,'spa+eng');text+=r.data.text+'\n';}return text;}
 async function handleOcrFile(e){
   const f=e.target.files[0];if(!f)return;
-  const st=document.getElementById('ocrStatus');
-  const setS=(m)=>st.innerHTML=`<div class="spin"></div><div class="hint">${m}</div>`;
   try{
-    setS('Cargando motor de lectura…');
+    ocrStatus('Cargando motor de lectura…');
     await ensureOcrLibs();
     let text='';
     if(f.type==='application/pdf'){
-      setS('Leyendo texto del PDF…');
-      text=await pdfText(f);
-      if(text.replace(/\s/g,'').length<25){setS('PDF escaneado: aplicando OCR…');text=await pdfOcr(f,setS);}
+      const buf=await f.arrayBuffer();
+      let pdf=null,pwd='';
+      while(!pdf){
+        try{ ocrStatus('Leyendo PDF…'); pdf=await loadPdfDoc(buf,pwd); }
+        catch(er){
+          if(er&&er.needPwd){ pwd=await askPdfPassword(); if(pwd===null){closeSheet();return;} ocrStatusSheet(); ocrStatus('Abriendo PDF protegido…'); }
+          else throw er;
+        }
+      }
+      ocrStatus('Extrayendo datos…');
+      text=await pdfTextDoc(pdf);
+      if(text.replace(/\s/g,'').length<25){ocrStatus('PDF escaneado: aplicando OCR…');text=await pdfOcrDoc(pdf);}
     }else{
-      setS('Aplicando OCR a la imagen…');
-      text=await imgOcr(f,setS);
+      ocrStatus('Aplicando OCR a la imagen…');
+      text=await imgOcr(f);
     }
     showOcrConfirm(parseStatement(text),f.name);
   }catch(err){
     console.error(err);
-    st.innerHTML=`<div class="hint" style="color:var(--yellow)">No pude leer automáticamente. Ingresa los datos a mano:</div>`;
+    const el=document.getElementById('ocrStatus');
+    if(el)el.innerHTML=`<div class="hint" style="color:var(--yellow)">No pude leer automáticamente. Ingresa los datos a mano:</div>`;
     setTimeout(()=>showOcrConfirm({},f.name),400);
   }
 }
-async function pdfText(f){
-  const buf=await f.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let out='';
-  for(let i=1;i<=Math.min(pdf.numPages,6);i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();
-    out+=tc.items.map(t=>t.str).join(' ')+'\n';}
-  return out;
-}
-async function pdfOcr(f,setS){
-  const buf=await f.arrayBuffer();const pdf=await pdfjsLib.getDocument({data:buf}).promise;let text='';
-  for(let i=1;i<=Math.min(pdf.numPages,2);i++){
-    setS('OCR página '+i+'…');
-    const pg=await pdf.getPage(i);const vp=pg.getViewport({scale:2});
-    const cv=document.createElement('canvas');cv.width=vp.width;cv.height=vp.height;
-    await pg.render({canvasContext:cv.getContext('2d'),viewport:vp}).promise;
-    const r=await Tesseract.recognize(cv,'spa+eng');text+=r.data.text+'\n';
-  }
-  return text;
-}
-async function imgOcr(f,setS){
-  const r=await Tesseract.recognize(f,'spa+eng',{logger:m=>{if(m.status==='recognizing text')setS('Reconociendo texto… '+Math.round(m.progress*100)+'%');}});
+async function imgOcr(f){
+  const r=await Tesseract.recognize(f,'spa+eng',{logger:m=>{if(m.status==='recognizing text')ocrStatus('Reconociendo texto… '+Math.round(m.progress*100)+'%');}});
   return r.data.text;
 }
 function ocrNum(s){
@@ -672,12 +687,23 @@ function toISO(d,mo,y){
   if(d<1||d>31||mm<1||mm>12)return null;
   return y+'-'+String(mm).padStart(2,'0')+'-'+String(d).padStart(2,'0');
 }
+function allDates(text){
+  const out=[];const re=/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g;let m;
+  while((m=re.exec(text))){const iso=toISO(m[1],m[2],m[3]);if(iso)out.push(iso);}
+  return out;
+}
+function dueFallback(text){
+  const today=new Date();today.setHours(0,0,0,0);
+  const max=new Date(today);max.setDate(max.getDate()+40);
+  const fut=allDates(text).map(s=>({s,d:new Date(s+'T00:00:00')})).filter(o=>o.d>=today&&o.d<=max);
+  if(!fut.length)return null;fut.sort((a,b)=>b.d-a.d);return fut[0].s;
+}
 function parseStatement(text){
   const t=' '+text.replace(/\s+/g,' ')+' ';
   return {
-    total:findAmount(t,['total a pagar','pagamento total','total do pagamento','saldo total','new balance','total balance','total adeudado','monto a pagar','total a cancelar']),
-    min:findAmount(t,['pago m[ií]nimo','pagamento m[ií]nimo','minimum payment','m[ií]nimo a pagar','pago minimo']),
-    venc:findDate(t,['vencimiento','vencimento','fecha l[ií]mite de pago','due date','payment due','fecha de pago','data de vencimento'])||findDate(t,['vence','venc']),
+    total:findAmount(t,['total da fatura','valor total da fatura','valor total desta fatura','valor total','total a pagar','pagamento total','total do pagamento','saldo total','new balance','total balance','total adeudado','monto a pagar','total a cancelar']),
+    min:findAmount(t,['pagamento m[ií]nimo desta fatura','pagamento m[ií]nimo','pago m[ií]nimo','minimum payment','m[ií]nimo a pagar','pago minimo']),
+    venc:findDate(t,['vencimento da fatura','data de vencimento','vencimento','vencimiento','fecha l[ií]mite de pago','due date','payment due','fecha de pago'])||findDate(t,['vence','venc'])||dueFallback(t),
     nombre:guessBank(text)
   };
 }
