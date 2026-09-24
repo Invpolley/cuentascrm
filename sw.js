@@ -1,5 +1,5 @@
-/* CuentasCRM Service Worker — offline cache */
-const CACHE = 'cuentascrm-v7';
+/* CuentasCRM Service Worker — offline cache. 2026-09-24: solo borra SUS caches (GitHub Pages comparte origen con Caja, Admin, Costos, Pagos y Toppers). */
+const CACHE = 'cuentascrm-v8';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -7,7 +7,7 @@ self.addEventListener('install', e => {
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys =>
-    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+    Promise.all(keys.filter(k => k.startsWith('cuentascrm') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
